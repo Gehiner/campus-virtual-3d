@@ -224,6 +224,62 @@ function StandArtwork({ src }: { src: string }) {
 }
 
 function Stand({ project, number, position, rotation, highlighted, onSelect }: StandProps) {
+  const glow = useRef(0); // 0 = apagado, 1 = jugador cerca (cambia suavemente)
+  const float = useRef<THREE.Group>(null);
+  const gem = useRef<THREE.Mesh>(null);
+  const orbit = useRef<THREE.Group>(null);
+
+  // Un solo material compartido para todos los bordes neón del stand:
+  // al cambiar su brillo una vez, se enciende todo el stand a la vez.
+  const glowMaterial = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: project.color,
+        emissive: project.color,
+        emissiveIntensity: 0.6,
+        metalness: 0.2,
+        roughness: 0.35,
+      }),
+    [project.color],
+  );
+  // Haz de luz falso (más barato que una luz real, importante en celulares).
+  const beamMaterial = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: project.color,
+        transparent: true,
+        opacity: 0.07,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    [project.color],
+  );
+  useEffect(
+    () => () => {
+      glowMaterial.dispose();
+      beamMaterial.dispose();
+    },
+    [glowMaterial, beamMaterial],
+  );
+
+  useFrame((state, rawDelta) => {
+    const dt = Math.min(rawDelta, 0.05);
+    const t = state.clock.elapsedTime + number; // "number" desfasa cada stand
+
+    glow.current += ((highlighted ? 1 : 0) - glow.current) * Math.min(1, dt * 6);
+    const pulse = highlighted ? Math.sin(t * 5) * 0.3 : 0;
+    glowMaterial.emissiveIntensity = 0.6 + glow.current * (1.8 + pulse);
+    beamMaterial.opacity = 0.07 + glow.current * 0.1;
+
+    if (float.current) {
+      float.current.position.y = 2.55 + Math.sin(t * 1.5) * 0.08;
+      float.current.scale.setScalar(1 + glow.current * 0.25);
+    }
+    if (gem.current) gem.current.rotation.y += dt * (0.8 + glow.current * 2.2);
+    if (orbit.current) orbit.current.rotation.y += dt * 1.1;
+  });
+
   return (
     <group
       position={position}
@@ -238,19 +294,21 @@ function Stand({ project, number, position, rotation, highlighted, onSelect }: S
       {/* plataforma */}
       <mesh position={[0, 0.15, 0]}>
         <boxGeometry args={[3.8, 0.3, 2.5]} />
-        <meshStandardMaterial color="#11182b" />
+        <meshStandardMaterial color="#11182b" metalness={0.4} roughness={0.5} />
       </mesh>
-      {/* borde luminoso: se enciende cuando estás cerca */}
-      <mesh position={[0, 0.32, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[1.95, 2.08, 4, 1, Math.PI / 4, Math.PI * 2]} />
-        <meshStandardMaterial
-          color={project.color}
-          emissive={project.color}
-          emissiveIntensity={highlighted ? 2.5 : 0.6}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      {/* Marco de vitrina y panel de recuerdo */}
+      {/* contorno neón de la plataforma */}
+      {[-1.2, 1.2].map((z) => (
+        <mesh key={z} position={[0, 0.305, z]} material={glowMaterial}>
+          <boxGeometry args={[3.7, 0.02, 0.05]} />
+        </mesh>
+      ))}
+      {[-1.85, 1.85].map((x) => (
+        <mesh key={x} position={[x, 0.305, 0]} material={glowMaterial}>
+          <boxGeometry args={[0.05, 0.02, 2.45]} />
+        </mesh>
+      ))}
+
+      {/* Marco de vitrina */}
       {[-1.72, 1.72].map((x) => (
         <mesh key={x} position={[x, 1.65, -0.92]}>
           <boxGeometry args={[0.14, 2.65, 0.24]} />
@@ -261,13 +319,20 @@ function Stand({ project, number, position, rotation, highlighted, onSelect }: S
         <boxGeometry args={[3.55, 0.14, 0.24]} />
         <meshStandardMaterial color="#263957" metalness={0.55} roughness={0.45} />
       </mesh>
+      {/* líneas neón del marco */}
+      {[-1.72, 1.72].map((x) => (
+        <mesh key={x} position={[x, 1.65, -0.795]} material={glowMaterial}>
+          <boxGeometry args={[0.03, 2.5, 0.02]} />
+        </mesh>
+      ))}
+      <mesh position={[0, 2.9, -0.795]} material={glowMaterial}>
+        <boxGeometry args={[3.3, 0.035, 0.02]} />
+      </mesh>
+
+      {/* panel de fondo + portada */}
       <mesh position={[0, 1.6, -0.9]}>
         <boxGeometry args={[3.2, 2.2, 0.15]} />
-        <meshStandardMaterial
-          color="#101a30"
-          metalness={0.25}
-          roughness={0.55}
-        />
+        <meshStandardMaterial color="#101a30" metalness={0.25} roughness={0.55} />
       </mesh>
       {project.coverUrl ? (
         <StandArtwork src={project.coverUrl} />
@@ -317,32 +382,77 @@ function Stand({ project, number, position, rotation, highlighted, onSelect }: S
       >
         {`MEMORIA ${String(number).padStart(2, "0")}`}
       </Text>
-      {/* mostrador */}
+
+      {/* mostrador con placa de nombre (el título solo se repite si hay portada) */}
       <mesh position={[0, 0.75, 0.5]}>
         <boxGeometry args={[2.4, 0.9, 0.6]} />
         <meshStandardMaterial color="#1a2542" metalness={0.35} roughness={0.5} />
       </mesh>
-      <mesh position={[0, 1.27, 0.5]}>
+      <mesh position={[0, 1.27, 0.5]} material={glowMaterial}>
         <boxGeometry args={[2.05, 0.07, 0.48]} />
-        <meshStandardMaterial
-          color={project.color}
-          emissive={project.color}
-          emissiveIntensity={highlighted ? 1.6 : 0.6}
-        />
       </mesh>
-      <mesh position={[0, 2.55, 0.18]} rotation={[0.2, 0.4, 0]}>
-        <octahedronGeometry args={[0.32]} />
-        <meshStandardMaterial
-          color={project.color}
-          emissive={project.color}
-          emissiveIntensity={highlighted ? 2 : 1}
-          metalness={0.2}
-          roughness={0.3}
-        />
+      {project.coverUrl && (
+        <Text
+          position={[0, 0.9, 0.81]}
+          fontSize={0.15}
+          maxWidth={2.2}
+          color="#ffffff"
+          anchorX="center"
+          anchorY="middle"
+          textAlign="center"
+        >
+          {project.title}
+        </Text>
+      )}
+      <Text
+        position={[0, project.coverUrl ? 0.62 : 0.75, 0.81]}
+        fontSize={0.11}
+        maxWidth={2.2}
+        color="#9bd9ff"
+        anchorX="center"
+        anchorY="middle"
+      >
+        {`por ${project.author}`}
+      </Text>
+
+      {/* cristal flotante con anillo orbital */}
+      <group ref={float} position={[0, 2.55, 0.18]}>
+        <mesh ref={gem} rotation={[0.2, 0.4, 0]}>
+          <octahedronGeometry args={[0.32]} />
+          <meshStandardMaterial
+            color={project.color}
+            emissive={project.color}
+            emissiveIntensity={highlighted ? 2 : 1}
+            metalness={0.2}
+            roughness={0.3}
+          />
+        </mesh>
+        <group ref={orbit}>
+          <mesh rotation={[1.1, 0, 0.3]} material={glowMaterial} raycast={() => null}>
+            <torusGeometry args={[0.55, 0.012, 8, 40]} />
+          </mesh>
+        </group>
+      </group>
+
+      {/* haz de luz que cae sobre el mostrador */}
+      <mesh position={[0, 1.95, 0.35]} material={beamMaterial} raycast={() => null}>
+        <cylinderGeometry args={[0.12, 1.1, 3.3, 24, 1, true]} />
       </mesh>
+
+      {/* partículas flotando dentro del haz */}
+      <Sparkles
+        count={10}
+        scale={[2.4, 2.4, 1.6]}
+        position={[0, 1.7, 0.35]}
+        size={3}
+        speed={0.4}
+        color={project.color}
+      />
     </group>
   );
 }
+
+
 
 const SKIN = "#e2b99f";
 
