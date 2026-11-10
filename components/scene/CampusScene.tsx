@@ -1,5 +1,5 @@
 "use client";
-
+import AmbientLife from "@/components/scene/AmbientLife";
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Sparkles, Stars, Text, useTexture } from "@react-three/drei";
@@ -804,6 +804,7 @@ export default function CampusScene({
       <Ground />
       <Plaza />
       <Gallery projectCount={projects.length} />
+      <AmbientLife projectCount={projects.length} />
 
       {projects.map((p, i) => (
         <Stand
