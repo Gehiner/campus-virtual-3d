@@ -6,9 +6,10 @@ import CampusScene from "@/components/scene/CampusScene";
 import GalleryMap from "@/components/GalleryMap";
 import ProjectModal from "@/components/ProjectModal";
 import TouchControls from "@/components/TouchControls";
-import { DEMO_PROJECTS } from "@/data/projects";
+import { DEMO_PROJECTS, type Project } from "@/data/projects";
 import { emptyInput, type InputState } from "@/lib/input";
 import { CAN_LIKE, ROLE_LABEL, type Role } from "@/lib/roles";
+import { createClient } from "@/lib/supabase/client";
 
 const AVATAR_COLORS = ["#ff4d8d", "#ffb02e", "#3ddc97", "#5aa9ff", "#a78bfa"];
 
@@ -23,9 +24,17 @@ const KEY_TO_DIR: Record<string, "up" | "down" | "left" | "right"> = {
   arrowright: "right",
 };
 
-export default function CampusApp({ role }: { role: Role }) {
-  // En v0.1 los proyectos son de prueba. Día 2: vendrán de Supabase.
-  const projects = DEMO_PROJECTS;
+export default function CampusApp({
+  role,
+  projects: suppliedProjects,
+  activityCode,
+}: {
+  role: Role;
+  projects?: Project[];
+  activityCode?: string;
+}) {
+  // Routes without a room keep the demo data for local preview.
+  const projects = suppliedProjects ?? DEMO_PROJECTS;
 
   const input = useRef<InputState>(emptyInput());
   const [nearbyId, setNearbyId] = useState<string | null>(null);
@@ -39,6 +48,43 @@ export default function CampusApp({ role }: { role: Role }) {
   // Likes de demostración: solo viven en memoria (se pierden al recargar).
   const [likes, setLikes] = useState<Record<string, number>>({});
   const [liked, setLiked] = useState<Set<string>>(new Set());
+  const [interactionError, setInteractionError] = useState("");
+
+  useEffect(() => {
+    if (!activityCode || projects.length === 0) return;
+    let active = true;
+    const supabase = createClient();
+    void (async () => {
+      const { data: counts, error: countsError } = await supabase.rpc("public_project_like_counts", {
+        input_project_ids: projects.map((project) => project.id),
+      });
+      if (countsError) {
+        if (active) setInteractionError(`No se pudieron cargar los likes: ${countsError.message}`);
+        return;
+      }
+      const countRows: Array<{ project_id: string; like_count: number | string }> = counts ?? [];
+      if (active) setLikes(Object.fromEntries(countRows.map((item) => [item.project_id, Number(item.like_count)])));
+
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        if (active) setInteractionError(`No se pudo validar la sesión: ${userError.message}`);
+        return;
+      }
+      if (user && role === "estudiante") {
+        const { data: ownLikes, error: ownLikesError } = await supabase
+          .from("project_likes")
+          .select("project_id")
+          .eq("user_id", user.id)
+          .in("project_id", projects.map((project) => project.id));
+        if (ownLikesError) {
+          if (active) setInteractionError(`No se pudo cargar tu actividad de likes: ${ownLikesError.message}`);
+          return;
+        }
+        if (active) setLiked(new Set((ownLikes ?? []).map((item) => item.project_id)));
+      }
+    })();
+    return () => { active = false; };
+  }, [activityCode, projects, role]);
 
   // El teclado necesita saber el estado actual sin reinstalar los listeners.
   const live = useRef({ nearbyId, selectedId });
@@ -75,12 +121,34 @@ export default function CampusApp({ role }: { role: Role }) {
   const nearbyIndex = nearbyId ? projects.findIndex((project) => project.id === nearbyId) : -1;
 
   const like = useCallback(
-    (id: string) => {
-      if (!CAN_LIKE[role] || liked.has(id)) return; // un like por proyecto
-      setLiked((prev) => new Set(prev).add(id));
-      setLikes((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+    async (id: string) => {
+      if (!CAN_LIKE[role] || liked.has(id)) return;
+      try {
+        if (activityCode) {
+          const supabase = createClient();
+          const { data: { user }, error: userError } = await supabase.auth.getUser();
+          if (userError) {
+            setInteractionError(`No se pudo validar la sesión: ${userError.message}`);
+            return;
+          }
+          if (!user) {
+            setInteractionError("Inicia sesión como estudiante para dar like.");
+            return;
+          }
+          const { error } = await supabase.from("project_likes").insert({ project_id: id, user_id: user.id });
+          if (error) {
+            setInteractionError(`No se pudo guardar el like: ${error.message}`);
+            return;
+          }
+        }
+        setInteractionError("");
+        setLiked((prev) => new Set(prev).add(id));
+        setLikes((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+      } catch (error) {
+        setInteractionError(error instanceof Error ? error.message : "No se pudo guardar el like.");
+      }
     },
-    [role, liked],
+    [role, liked, activityCode],
   );
 
   // Teclado: WASD / flechas para moverse, E o Enter para abrir, Esc para cerrar.
@@ -160,6 +228,11 @@ export default function CampusApp({ role }: { role: Role }) {
             ← Inicio
           </Link>
           <span className="badge">{ROLE_LABEL[role]}</span>
+          {role === "estudiante" && activityCode && (
+            <Link href={`/s/${encodeURIComponent(activityCode)}/proyecto`} className="btn primary small">
+              Publicar mi proyecto
+            </Link>
+          )}
         </div>
 
         <div className="hud-group swatches" aria-label="Color del avatar">
@@ -258,6 +331,8 @@ export default function CampusApp({ role }: { role: Role }) {
           likes={likes[selected.id] ?? 0}
           hasLiked={liked.has(selected.id)}
           onLike={() => like(selected.id)}
+          interactionError={interactionError}
+          activityCode={activityCode}
           onClose={closeProject}
         />
       )}

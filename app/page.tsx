@@ -12,7 +12,7 @@ export default function Home() {
       <nav className="cards">
         <Link href="/estudiante" className="card">
           <h2>Estudiante</h2>
-          <p>Recorre el campus, abre proyectos y da likes.</p>
+          <p>Regístrate o inicia sesión para entrar a la sala de tu docente y publicar tu proyecto.</p>
         </Link>
         <Link href="/observador" className="card">
           <h2>Observador</h2>
