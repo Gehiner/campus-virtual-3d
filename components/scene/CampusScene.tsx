@@ -344,29 +344,92 @@ function Stand({ project, number, position, rotation, highlighted, onSelect }: S
   );
 }
 
-function FirstPersonHands({ color }: { color: string }) {
-  const hands = useRef<THREE.Group>(null);
+const SKIN = "#e2b99f";
+
+function FirstPersonHands({
+  color,
+  input,
+}: {
+  color: string;
+  input: MutableRefObject<InputState>;
+}) {
+  const root = useRef<THREE.Group>(null);
+  const arms = useRef<(THREE.Group | null)[]>([null, null]);
+  const walk = useRef(0); // 0 = quieto, 1 = caminando (cambia suavemente)
   const camera = useThree((state) => state.camera);
 
-  useFrame(() => {
-    if (!hands.current) return;
-    hands.current.position.copy(camera.position);
-    hands.current.quaternion.copy(camera.quaternion);
-    hands.current.translateY(-0.42);
-    hands.current.translateZ(-1.45);
+  useFrame((state, rawDelta) => {
+    const group = root.current;
+    if (!group) return;
+    const dt = Math.min(rawDelta, 0.05);
+
+    // Las manos viajan pegadas a la cámara, como antes.
+    group.position.copy(camera.position);
+    group.quaternion.copy(camera.quaternion);
+    group.translateY(-0.42);
+    group.translateZ(-1.45);
+
+    // ¿Se está moviendo? Suavizamos el cambio para que no sea brusco.
+    const i = input.current;
+    const moving = Math.hypot(i.kx + i.tx, i.kz + i.tz) > 0.01 ? 1 : 0;
+    walk.current += (moving - walk.current) * Math.min(1, dt * 8);
+
+    const t = state.clock.elapsedTime;
+    [-1, 1].forEach((side, n) => {
+      const arm = arms.current[n];
+      if (!arm) return;
+      const step = Math.sin(t * 10 + (side > 0 ? Math.PI : 0)); // manos alternadas
+      const breathe = Math.sin(t * 1.6 + n) * 0.006;
+      arm.position.set(
+        side * 0.3,
+        -0.1 + breathe + step * 0.025 * walk.current,
+        step * 0.04 * walk.current,
+      );
+      arm.rotation.set(0.2 + step * 0.08 * walk.current, 0, side * -0.18);
+    });
   });
 
   return (
-    <group ref={hands}>
-      {[-1, 1].map((side) => (
-        <group key={side} position={[side * 0.3, -0.1, 0]} rotation={[0.2, 0, side * -0.18]}>
-          <mesh rotation={[0, 0, side * -0.2]}>
-            <capsuleGeometry args={[0.075, 0.34, 4, 8]} />
-            <meshStandardMaterial color={color} roughness={0.75} />
+    <group ref={root}>
+      {[-1, 1].map((side, n) => (
+        <group
+          key={side}
+          ref={(el) => {
+            arms.current[n] = el;
+          }}
+        >
+          {/* manga (usa el color elegido) */}
+          <mesh>
+            <capsuleGeometry args={[0.085, 0.34, 4, 12]} />
+            <meshStandardMaterial
+              color={color}
+              emissive={color}
+              emissiveIntensity={0.15}
+              roughness={0.55}
+              metalness={0.15}
+            />
           </mesh>
-          <mesh position={[0, 0.2, -0.025]}>
-            <sphereGeometry args={[0.08, 12, 10]} />
-            <meshStandardMaterial color="#e2b99f" roughness={0.8} />
+          {/* puño luminoso */}
+          <mesh position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[0.09, 0.013, 8, 24]} />
+            <meshStandardMaterial color="#2dd4ff" emissive="#2dd4ff" emissiveIntensity={1.8} />
+          </mesh>
+          {/* palma */}
+          <mesh position={[0, 0.27, 0]} scale={[1, 1.1, 0.7]}>
+            <sphereGeometry args={[0.075, 14, 12]} />
+            <meshStandardMaterial color={SKIN} roughness={0.8} />
+          </mesh>
+          {/* cuatro dedos, ligeramente curvados */}
+          {[-0.045, -0.015, 0.015, 0.045].map((x) => (
+            <mesh key={x} position={[x, 0.35, -0.01]} rotation={[-0.25, 0, 0]}>
+              <capsuleGeometry args={[0.017, 0.05, 3, 6]} />
+              <meshStandardMaterial color={SKIN} roughness={0.8} />
+            </mesh>
+          ))}
+          {/* pulgar, apuntando hacia el centro */}
+          <mesh position={[-side * 0.075, 0.28, -0.01]} rotation={[0, 0, side * 0.6]}>
+            <capsuleGeometry args={[0.019, 0.045, 3, 6]} />
+            <meshStandardMaterial color={SKIN} roughness={0.8} />
           </mesh>
         </group>
       ))}
@@ -582,7 +645,7 @@ function Avatar({
     }
   });
 
-  return <FirstPersonHands color={color} />;
+    return <FirstPersonHands color={color} input={input} />;
 }
 
 // ---------------------------------------------------------------- Escena completa
